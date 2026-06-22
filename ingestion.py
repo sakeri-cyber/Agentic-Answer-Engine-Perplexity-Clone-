@@ -1,13 +1,16 @@
+import ssl
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from elasticsearch import AsyncElasticsearch
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, VectorParams
+from worker import process_and_ingest
+import asyncio
 
 # Database Clients
-es_client = AsyncElasticsearch(hosts=["http://localhost:9200"])
-qdrant_client = AsyncQdrantClient(url="http://localhost:6333")
+es_client = AsyncElasticsearch(hosts=["http://127.0.0.1:9200"])
+qdrant_client = AsyncQdrantClient(url="http://127.0.0.1:6333")
 
 COLLECTION_NAME = "arxiv_papers"
 
@@ -25,9 +28,12 @@ async def init_databases():
         print(f"Created Qdrant collection: {COLLECTION_NAME}")
 
     # 2. Setup Elasticsearch
-    if not await es_client.indices.exists(index=COLLECTION_NAME):
+    try:
         await es_client.indices.create(index=COLLECTION_NAME)
         print(f"Created Elasticsearch index: {COLLECTION_NAME}")
+    except Exception:
+        # If the index already exists, ES throws an error. We silently catch it and proceed!
+        pass
     
 def fetch_recent_arxiv_papers(max_results=50):
     """Fetches recent papers from ArXiv API"""
@@ -36,7 +42,8 @@ def fetch_recent_arxiv_papers(max_results=50):
     # Fetching ML/AI papers, sorted by recently updated
     url = f'http://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=lastUpdatedDate&sortOrder=descending&max_results={max_results}'
 
-    data = urllib.request.urlopen(url).read()
+    context = ssl._create_unverified_context()
+    data = urllib.request.urlopen(url, context = context).read()
     root = ET.fromstring(data)
     
     # XML Namespace
@@ -60,16 +67,21 @@ def fetch_recent_arxiv_papers(max_results=50):
             "citation_count": citation_count
         })
 
-        print(f"Successfully fetched paper {len(papers)} papers.")
-        return papers 
+    print(f"Successfully fetched paper {len(papers)} papers.")
+    return papers 
 
-if __name__ == "__main__":
-    import asyncio 
-    asyncio.run(init_databases())
+async def main():
+    await init_databases()
+
     docs = fetch_recent_arxiv_papers(10)
 
+    print("Handing off to the embedding worker ...")
     for d in docs:
-        print(f"Title: {d['title']}")
-        print(f"Published: {d['published_date']}")
-        print("-" * 80)
+        print(f"Processing paper: {d['title']}")
+        await process_and_ingest(d)
+
+    print("Ingestion Pipeline Complete !!")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 

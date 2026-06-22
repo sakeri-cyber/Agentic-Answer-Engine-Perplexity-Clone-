@@ -6,12 +6,12 @@ from qdrant_client.models import PointStruct
 
 # Initialising Client and Models 
 
-es_client = AsyncElasticsearch("http://localhost:9200")
-qdrant_client = AsyncQdrantClient(url = "http://localhost:6333")
+# es_client = AsyncElasticsearch("http://localhost:9200")
+# qdrant_client = AsyncQdrantClient(url = "http://localhost:6333")
 COLLECTION_NAME = "arxiv_papers"
 
 print("Loading pplx-embed-context-v1-0.6B model...")
-embedder = SentenceTransformer("perplexity-ai/pplx-embed-context-v1-0.6B")
+embedder = SentenceTransformer("perplexity-ai/pplx-embed-context-v1-0.6B" , trust_remote_code=True)
 
 def chunk_text(text , chunk_size=250, overlap=50):
     """Splits text into chunks with specified size and overlap"""
@@ -24,6 +24,9 @@ def chunk_text(text , chunk_size=250, overlap=50):
 
 async def process_and_ingest(paper):
     """Takes a single paper dictionary, chunks it, embeds it and upserts top DBs"""
+
+    
+
     # Chunk the document
     chunks = chunk_text(paper['abstract'])
 
@@ -61,7 +64,10 @@ async def process_and_ingest(paper):
 
         # Prepare Elasticsearch payload
         es_operations.append({
-            "_index": COLLECTION_NAME,
+            "index": {
+                "_index": COLLECTION_NAME,
+                "_id" : chunk_uuid
+            }
         })
         es_operations.append({
             "arxiv": paper['id'],
@@ -70,7 +76,9 @@ async def process_and_ingest(paper):
             "published_date": paper['published_date']
         })
     
-
+    es_client = AsyncElasticsearch("http://127.0.0.1:9200", request_timeout=60)
+    qdrant_client = AsyncQdrantClient(url="http://127.0.0.1:6333", timeout=60)
+    
     try: 
         # Upsert to Qdrant
         await qdrant_client.upsert(
@@ -85,5 +93,7 @@ async def process_and_ingest(paper):
     except Exception as e:
         print(f"Error ingesting paper {paper['title']}: {str(e)}")
     
-
+    finally:
+        # Clean up the connections so we don't leak memory
+        await es_client.close()
 
