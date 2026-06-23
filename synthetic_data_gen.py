@@ -143,7 +143,11 @@ async def generate_dataset(papers: list):
             query_id = con.execute("SELECT nextval('seq_query_id')").fetchone()[0]
             
             # MOCKING CANDIDATES: In production, we'd query the DB. Here we mock Good and Bad matches to train the ranker
-            candidates = [paper, {"title": "Irrelevant Spam", "abstract": "Buy cheap things online", "id": "spam_1"}]
+            candidates = [
+                paper, 
+                {"title": "Somewhat related AI paper", "abstract": "This discusses neural networks but not diffusion specifically.", "id": "avg_1", "dense_score": random.uniform(0.7, 0.8)},
+                {"title": "Irrelevant Spam", "abstract": "Buy cheap things online", "id": "spam_1", "dense_score": random.uniform(0.2, 0.4)}
+            ]
             
             for cand in candidates:
                 features = calculate_features(cand, query)

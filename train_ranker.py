@@ -1,14 +1,14 @@
 import duckdb
 import xgboost as xgb
 import pandas as pd
+import matplotlib.pyplot as plt
 
 def train_xgboost_model():
     print("Connecting to DuckDB...")
     con = duckdb.connect('training_data.duckdb')
     
     # 1. Extract the Feature Matrix and Target Labels
-    # We explicitly exclude query_id, document_id, query_text, and llm_reasoning 
-    # because XGBoost only understands raw numbers, not strings or IDs.
+    # We strictly exclude query_id, document_id, query_text, and llm_reasoning
     print("Extracting feature matrix...")
     df = con.execute("""
         SELECT 
@@ -36,38 +36,42 @@ def train_xgboost_model():
     X = df.drop('relevance_label', axis=1)
     y = df['relevance_label']
     
-    # 3. Create XGBoost DMatrix
-    # Note: For true LTR, XGBoost expects a 'group' array telling it how many 
-    # documents belong to each query, but for this simplified portfolio script, 
-    # we will use pairwise ranking natively handled by the DMatrix.
     print(f"Training on {len(X)} query-document pairs...")
+    
+    # 3. Create XGBoost DMatrix
     dtrain = xgb.DMatrix(X, label=y)
     
     # 4. Set LambdaMART / NDCG Parameters
     params = {
-        'objective': 'rank:ndcg',
-        'eval_metric': 'ndcg',
+        'objective': 'rank:ndcg',    # Learning to Rank objective
+        'eval_metric': 'ndcg',       # Normalized Discounted Cumulative Gain
         'learning_rate': 0.1,
-        'max_depth': 4, # Keep trees shallow to prevent overfitting on synthetic data
-        'tree_method': 'hist' # Highly efficient histogram-based algorithm
+        'max_depth': 4,              # Keep shallow to prevent overfitting on small data
+        'tree_method': 'hist'
     }
     
     # 5. Train the Model
     print("Running gradient boosting...")
     model = xgb.train(params, dtrain, num_boost_round=50)
     
-    # 6. Save the Model
+    # 6. Save the Model File
     model_path = "perplexity_ranker_v1.json"
     model.save_model(model_path)
-    print(f"Model successfully saved to {model_path}!")
+    print(f"✅ Model successfully saved to {model_path}!")
     
-    # Optional: Print Feature Importance so you can explain it in your interview
+    # 7. Generate Feature Importance Dashboard
+    print("\nGenerating Feature Importance Graph...")
     importance = model.get_score(importance_type='gain')
-    print("\nFeature Importance (Gain):")
+    
+    # Print to console
     for feature, score in sorted(importance.items(), key=lambda x: x[1], reverse=True):
         print(f" - {feature}: {score:.2f}")
+        
+    # Save to image
+    xgb.plot_importance(model, importance_type='gain', title='XGBoost Feature Importance (Gain)')
+    plt.tight_layout()
+    plt.savefig("feature_importance.png")
+    print("📊 Dashboard saved as 'feature_importance.png'")
 
 if __name__ == "__main__":
     train_xgboost_model()
-    xgb.plot_importance(model)
-    plt.savefig("feature_importance.png")
