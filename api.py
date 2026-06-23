@@ -9,6 +9,9 @@ from sentence_transformers import SentenceTransformer
 from elasticsearch import AsyncElasticsearch
 from qdrant_client import AsyncQdrantClient
 import re
+from fastapi.responses import StreamingResponse
+from ranker import rerank_candidates
+from generator import evaluate_context, fallback_web_search, generate_final_answer_stream
 
 load_dotenv()
 
@@ -173,12 +176,33 @@ async def execute_search(request: QueryRequest):
     
     print(f"Total unique candidates after fusion: {len(fused_candidates)}")
     
-    return {
-        "status": "success",
-        "routing": routing_data,
-        "top_fused_hit": fused_candidates[0]['title'] if fused_candidates else None,
-        "total_results": len(fused_candidates)
-    }
+    # --- PHASE 4: XGBoost Precision Re-Ranking ---
+    print("Re-ranking candidates via XGBoost LambdaMART...")
+    # final_top_5 = rerank_candidates(fused_candidates, request.query, top_k=5)
+    final_top_5 = fused_candidates[:5]
+
+    # --- PHASE 5: Agentic CRAG Bouncer ---
+    print("Evaluating context quality...")
+    context_judgment = await evaluate_context(request.query, final_top_5)
+    print(f"Context Judgment: {context_judgment}")
+    
+    # final_context = final_top_5
+    # if context_judgment == "Incorrect":
+    #     web_results = await fallback_web_search(request.query)
+    #     final_context = web_results + final_top_5[:2] 
+
+    final_context = final_top_5
+    if context_judgment == "Incorrect":
+        web_results = await fallback_web_search(request.query)
+        # If web fails, don't throw away local context! Let the Generator see everything.
+        final_context = web_results + final_top_5
+
+    # --- PHASE 6: Stream the Answer ---
+    print("Streaming final answer...")
+    return StreamingResponse(
+        generate_final_answer_stream(request.query, final_context), 
+        media_type="text/event-stream"
+    )
 
 if __name__ == "__main__":
     import uvicorn
