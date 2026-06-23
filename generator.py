@@ -37,9 +37,9 @@ async def evaluate_context(query: str, documents: list) -> str:
 # --- 2. Fallback Web Search ---
 async def fallback_web_search(query: str) -> list:
     print(f"\n🌐 CRAG Fallback Triggered: Searching the web for '{query}'...")
-    if not TAVILY_API_KEY:
-        print("No Tavily API key found. Skipping live web search.")
-        return []
+    if not TAVILY_API_KEY or TAVILY_API_KEY == "dummy_key_for_testing":
+        print("⚠️ Dummy Tavily key detected. Simulating web search fallback...")
+        return [{"title": "Simulated Web Result", "text": "This is a simulated web search result because a dummy API key is in use.", "source": "Web Fallback"}]
     
     async with httpx.AsyncClient() as client:
         try:
@@ -48,10 +48,14 @@ async def fallback_web_search(query: str) -> list:
                 json={"api_key": TAVILY_API_KEY, "query": query, "search_depth": "basic"},
                 timeout=5.0
             )
+            if response.status_code != 200:
+                print(f"⚠️ Tavily API Error: {response.status_code}. Using empty web context.")
+                return []
+                
             results = response.json().get("results", [])
             return [{"title": r["title"], "text": r["content"], "source": "Web Fallback"} for r in results]
         except Exception as e:
-            print(f"Web search failed: {e}")
+            print(f"❌ Web search failed: {e}")
             return []
 
 # --- 3. The Streaming Synthesizer ---
